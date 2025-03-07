@@ -21,7 +21,7 @@ If you are on Linux or Mac (or wish to run Icarus Lite from its source directly 
 6. Icarus Lite will attempt to automatically set up the required file structure and download the latest SSL certificates from kxtz's Icarus fork.
 <details>
   <summary>Icarus Lite failing to download certificates?</summary>
-  You will need to manually download the certificates from a proper source (recommended to use kxtz's Icarus fork) and place them into ``Icarus Lite/manualcerts``.
+  You will need to manually download the certificates from a proper source (recommended to use [kxtz's Icarus fork](https://git.kxtz.dev/kxtzownsu/httpmitm/src/branch/main/configs/m.google.com/public)) and place them into ``Icarus Lite/manualcerts``.
 </details>
 
 ## Usage Instructions
@@ -36,8 +36,29 @@ Once Icarus Lite is running, usage is extremely simple. <b>Icarus Lite will atte
   <summary>Device still enrolling/getting "Can't reach Google"?</summary>
   - Make sure that Icarus Lite is recieving and handling the ChromeOS device's requests; check the terminal/window where Icarus Lite is running for any output past "Icarus LITE is running on...". If nothing else has been output, it means Icarus Lite isn't recieving requests from the Chromebook and therefore is not handling them accordingly. In this case, re-run the Icarus shim and ensure:
     - The target ChromeOS device and the device hosting the proxy are on the <b>SAME</b> WiFi network
-    - a
+    - The shim used on the target ChromeOS device was built with the same CA (Certificate Authority) used to generate the SSL certificates.
+      - If you're using a prebuilt shim and don't know what CA was used, consider building your own shim and SSL certificates if nothing else works.
 </details>
+
+## Prebuilt Shim Downloads
+Icarus Lite only replaces the server functionality of Icarus, but for Icarus to successfully unenroll a ChromeOS device, that device still must have had an Icarus shim ran on it. Icarus Lite does not currently have the functionality to build shims, so users must either use prebuilt shims or build their own shims from Icarus's original source. Instructions on building shims, along with a maintained fork of Icarus, can be found [here](https://github.com/fanqyxl/icarus?tab=readme-ov-file#setup-and-installation-instructions).
+
+For prebuilt shims, it is recommended to download them from the below servers:
+- [kxtz's download server](https://dl.kxtz.dev/)
+- [fanqyxl's download server](https://dl.fanqyxl.net/)
+
+## Certificates
+In order for the client (target ChromeOS device) to establish a proper connection to the MiniSever, we need an SSL certificate to establish the secure tunnel. If the SSL certificate is invalid, the target device will reject the connection (which in most cases will bring you to a "Cannot reach Google" screen). Icarus uses a custom CA (Certificate Authority) which isn't trusted to external devices, which also means any SSL certificates generated from our custom CA will also not be trusted to external devices. This causes most devices (including any ChromeOS devices) to reject the connection because of the untrusted CA.
+
+This is why a user must run an Icarus shim on a ChromeOS device prior to using the Icarus Lite server for unenrollment; in the simplest terms, the shim makes the device trust the CA so that way the device won't refuse the connection to the MiniServer.
+
+When a shim has been built using a different CA than the SSL certificates, the target device will still reject the connection. This is why if constantly getting a "Can't reach Google" screen, users should consider building their own shim and SSL certificates.
+
+SSL certificates can be generated using [generate_ssl_certificate.sh](https://github.com/fanqyxl/icarus/blob/main/httpmitm/generate_ssl_certificate.sh) once a CA has been generated.
+
+## Future Updates
+This section contains planned updates to Icarus Lite to improve functionality.
+- Shim building implementation
 
 ## Credits
 - [cosmicdevv](https://github.com/cosmicdevv) - Writing and maintaining Icarus Lite
