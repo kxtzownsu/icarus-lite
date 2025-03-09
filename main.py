@@ -20,16 +20,13 @@ import shutil
 import threading
 import select
 import re
+import requests
 import http.server
 import urllib.request
 import urllib.parse
 from dmbackend import device_management_pb2
 
 pInitial = 3001 # The port that MiniServers will start up from.
-sslCerts = {
-    "m.google.com.key": "https://git.kxtz.dev/kxtzownsu/httpmitm/raw/branch/main/configs/m.google.com/public/google.com.key",
-    "m.google.com.pem": "https://git.kxtz.dev/kxtzownsu/httpmitm/raw/branch/main/configs/m.google.com/public/google.com.pem"
-} # Stores names and links of certificates to download
 certPaths = {} # Stores paths of certificates on the local filesystem
 
 # Custom function to print text with color to enhance user experience while reducing dependies (such as Colorama) that are needed
@@ -53,7 +50,6 @@ class MiniServerHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         # Slightly rewritten part of dmbackend
-
         # Get the body content of the request from the client
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         # Create a dmr object
@@ -64,7 +60,6 @@ class MiniServerHandler(http.server.SimpleHTTPRequestHandler):
         resp = None
         # all the magic originally by writable
         if (dmr.HasField("device_state_retrieval_request")):
-            print("intercepting")
             status_code = 200
             resp = device_management_pb2.DeviceManagementResponse()
             rr = resp.device_state_retrieval_response
@@ -77,19 +72,20 @@ class MiniServerHandler(http.server.SimpleHTTPRequestHandler):
             dv.disabled_state.message = ""
             rr.restore_mode = 0
             rr.management_domain = ""
+            print(dmr)
         else:
-            req = urllib.request.Request("https://m.google.com/devicemanagement/data/api?" + urllib.parse.urlparse(self.path).query, data=data, headers=dict(self.headers), method="POST")
-            with urllib.request.urlopen(req) as response:
-                status_code = response.getcode()
-                con = response.read().decode()
+            con = requests.post("https://m.google.com/devicemanagement/data/api?" + urllib.parse.urlparse(self.path).query, data=body, headers=dict(self.headers))
+            status_code = con.status_code
             resp = device_management_pb2.DeviceManagementResponse()
-            resp.ParseFromString(con)
+            resp.ParseFromString(con.content)
+            print(con)
         # Send the response back to the client, which unenroll the device
         self.send_response(status_code)
         self.send_header("Content-Type", "application/x-protobuffer")
         self.send_header("Content-Length", str(len(resp.SerializeToString())))
         self.end_headers()
         self.wfile.write(resp.SerializeToString())
+        colorprint("Successfully intercepted request.\n\n", "green")
 
 
 class MiniServer:
@@ -109,7 +105,7 @@ class MiniServer:
                 self.port = pInitial
                 continue
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile=certPaths["pem"], keyfile=certPaths["key"])
+        context.load_cert_chain(certfile="./certs/google.com.pem", keyfile="./certs/google.com.key")
         self.httpd.socket = context.wrap_socket(self.httpd.socket, server_side=True)
         pInitial += 1
         threading.Thread(target=self.httpd.serve_forever).start() # Start the server in a separate thread so it doesn't block the main thread.
@@ -117,7 +113,7 @@ class MiniServer:
 
 def handle_client(client_socket, address):
     # Initial request buffer
-    colorprint("// HANDLING REQUEST \\\\\n", "blue")
+    colorprint("// HANDLING REQUEST \\\\", "blue")
     host = None
     port = 0
     is_tls = False
@@ -174,7 +170,10 @@ def handle_client(client_socket, address):
         # Acknowledge the request, then pipe the client to the MiniServer
         client_socket.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         try:
-            tunnel_traffic(client_socket, miniserver_socket)
+            pipe = tunnel_traffic(client_socket, miniserver_socket)
+            # If tunnel closed on first packet (client likely rejected connection)
+            if not pipe:
+                colorprint("ERROR: The client may have rejected the connection. This is usually an SSL issue.", "red")
         except Exception as e:
             colorprint(f"ERROR: {e}\nThe client may have rejected the connection.", "red")
             colorprint("Have you ran the Icarus shim on the target Chromebook?", "blue")
@@ -192,7 +191,7 @@ def handle_client(client_socket, address):
             server_socket.sendall(request)
         # Same as .pipe() in NodeJS but we have to do it a bit differently.
         try:
-            tunnel_traffic(client_socket, server_socket)
+            pipe = tunnel_traffic(client_socket, server_socket)
         except Exception as e:
             colorprint(f"ERROR: {e}\nUnknown failure tunneling traffic.", "red")
     except Exception as e:
@@ -214,83 +213,20 @@ def tunnel_traffic(client_socket, server_socket):
             # normally we'd put a try catch exception here but i want it to raise an error when there is one
             data = sock.recv(4096)
             if not data:
-                # Socket closed
-                return
+                # If it's the first packet or something, return False for error handling purposes
+                if readable.index(sock) == 0:
+                    return False
+                return True
+            first = False
             peer_sock.sendall(data)
     client_socket.close()
     server_socket.close()
 
 colorprint("Icarus Lite v1.0", "blue")
 colorprint("Written by cosmicdevv", "blue")
-colorprint("Checking installation...", "blue")
-# Check if the Icarus folder exists
-firstTime = False
-if not os.path.exists("Icarus Lite"):
-    firstTime = True
-    colorprint("! WARNING !\nIcarus Lite is not set up in the local directory. Do you want to automatically set up? (Y/N)", "blue")
-    # Ask the user if they want to create the Icarus folder, loop to ensure valid input
-    while True:
-        choice = input().lower()
-        if choice in ["y", "yes"]:
-            break
-        elif choice in ["n", "no"]:
-            colorprint("Icarus Lite will not set up due to user choice.", "red")
-            exit()
-    # If they selected yes, create necessary folders
-    colorprint("Creating install folder...", "blue")
-    os.mkdir("Icarus Lite")
-    colorprint("Creating certificate folder...", "blue")
-    os.mkdir("Icarus Lite/autocerts")
-    colorprint("Creating manual certificate folder...", "blue")
-    os.mkdir("Icarus Lite/manualcerts")
-    colorprint("Creating dmbackend folder...", "blue")
-    os.mkdir("Icarus Lite/dmbackend")
-colorprint("Downloading latest Icarus SSL certificates...", "blue")
-success = True # If a download fails, this gets set to false
-# Loop through all the necessary SSL certificates, where their filename is the key and the download url is the value
-for sslCert in sslCerts:
-    try:
-        # Try to download the certificate from the url and place it in the autocerts folder
-        urllib.request.urlretrieve(sslCerts[sslCert], f"Icarus Lite/autocerts/{sslCert}")
-        if firstTime:
-            # Create a backup copy of the certificate in the manualcerts folder
-            shutil.copy(f"Icarus Lite/autocerts/{sslCert}", f"Icarus Lite/manualcerts/{sslCert}")
-        colorprint(f"Latest '{sslCert}' downloaded.", "green")
-    except Exception as e:
-        # If the download fails
-        success = False
-        colorprint(f"'{sslCert}' failed to download.", "red")
-# If not all downloads were successful, run this
-if not success:
-    colorprint("One or more certificates could not be downloaded. Checking ability to run...", "red")
-    # Check if the required certs were downloaded (in case we put other files in the download list for some reason)
-    if not os.path.exists("Icarus Lite/autocerts/m.google.com.key") or not os.path.exists(f"Icarus Lite/autocerts/m.google.com.pem"):
-        colorprint("Icarus Lite is unable to run from auto-downloaded certificates.", "blue")
-        messageDisplayed = False
-        # Loop until certificates are manually added to the manualcerts folder (we use a different folder for manual certs so if a user puts certs in a folder, they aren't overwritten by the autodownloads unless it's a fresh setup)
-        while True:
-            if os.path.exists("Icarus Lite/manualcerts/m.google.com.key") and os.path.exists(f"Icarus Lite/manualcerts/m.google.com.key"):
-                colorprint("Manual certificates found. Using manual certificates for Icarus Lite.", "green")
-                # Set the certificate paths to the manualcerts path
-                certPaths["key"] = "Icarus Lite/manualcerts/m.google.com.key"
-                certPaths["pem"] = "Icarus Lite/manualcerts/m.google.com.pem"
-                break
-            # If the user doesn't have certs in manualcerts on first check, prompt them to put them in.
-            if messageDisplayed == False:
-                colorprint("Please manually download the certificates and place them in:\nIcarus Lite/manualcerts/\nWaiting for certificates...", "blue")
-                messageDisplayed = True # Ensure the message isn't displayed every loop iteration
-            # small delay
-            time.sleep(1)
-    else:
-        # If the required certs were auto-downloaded, we'll use them
-        certPaths["key"] = "Icarus Lite/autocerts/m.google.com.key"
-        certPaths["pem"] = "Icarus Lite/autocerts/m.google.com.pem"
-else:
-    # If all downloads were successful, we'll use the downloaded certs
-    certPaths["key"] = "Icarus Lite/autocerts/m.google.com.key"
-    certPaths["pem"] = "Icarus Lite/autocerts/m.google.com.pem"
+colorprint("Improved by kxtzownsu", "blue")
 
-port = 8080
+port = 8126
 proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 proxy_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 proxy_socket.bind(("0.0.0.0", port))
@@ -302,9 +238,7 @@ s.connect(("8.8.8.8", 1))
 local_ip = s.getsockname()[0]
 s.close()
 
-# aaaaaaaaaaaaaaaaaaaaaa
-print("\n\n\n")
-colorprint(f"Icarus Lite is running on: {local_ip}:{port}", "blue")
+colorprint(f"Icarus Lite is running on: {local_ip}:{port}", "green")
 while True:
     try:
         client_socket, client_address = proxy_socket.accept()
