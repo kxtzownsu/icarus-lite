@@ -8,6 +8,11 @@ Improved by [kxtzownsu](https://github.com/kxtzownsu)
 > If you want to use my (kxtz) shims, pass `--bypass` to the start.sh script below!
 -->
 
+> [!IMPORTANT]
+> This does not support Windows. <br />
+> This only supports ***native Linux***, not WSL or Crostini/LinuxOnChromeOS <br />
+> <sub>wsl nor crostini have been tested, but are assumed not to work, nor will bugs about them be fixed</sub>
+
 ## running
 ```
 bash start.sh # starts the server
